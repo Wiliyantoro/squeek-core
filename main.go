@@ -6,6 +6,7 @@ package main
 // streams live updates via SSE, serves optional Telegram alerts.
 
 import (
+	"flag"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -315,10 +316,10 @@ func (s *Store) handleHealth(w http.ResponseWriter, r *http.Request) {
 // ---------- static file serving (optional, for local testing) ----------
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8890"
-	}
+	addr := flag.String("addr", "127.0.0.1:8890", "listen address")
+	staticDir := flag.String("static", "", "optional static file dir (SqueekPulse root + squeekfi/)")
+	flag.Parse()
+
 	s := &Store{
 		tgToken: os.Getenv("TG_TOKEN"),
 		tgChat:  os.Getenv("TG_CHAT"),
@@ -334,9 +335,23 @@ func main() {
 	mux.HandleFunc("/api/stream", s.handleStream)
 	mux.HandleFunc("/healthz", s.handleHealth)
 
-	addr := "127.0.0.1:" + port
-	log.Printf("squeek-core listening on %s (read-only, no keys)", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if *staticDir != "" {
+		fs := http.FileServer(http.Dir(*staticDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			p := r.URL.Path
+			if p == "/" || p == "/index.html" || p == "/squeekfi" || strings.HasPrefix(p, "/squeekfi/") {
+				w.Header().Set("Cache-Control", "no-cache")
+				if p == "/squeekfi" {
+					http.Redirect(w, r, "/squeekfi/", http.StatusMovedPermanently)
+					return
+				}
+			}
+			fs.ServeHTTP(w, r)
+		})
+	}
+
+	log.Printf("squeek-core listening on %s (read-only, no keys)", *addr)
+	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
